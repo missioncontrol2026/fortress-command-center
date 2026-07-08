@@ -1,0 +1,205 @@
+// Fortress Command Center dashboard server.
+// Serves static HTML/CSS/JS and proxies data calls to backend services
+// (Salesforce proxy, Call Tools proxy, scraper) with API keys kept server-side.
+
+const http = require('http');
+const https = require('https');
+const fs = require('fs');
+const path = require('path');
+const { URL } = require('url');
+
+const PORT = process.env.PORT || 10000;
+
+const BACKENDS = {
+  sf: process.env.SF_PROXY_URL || 'https://fortress-sf-proxy.onrender.com',
+  calltools: process.env.CALLTOOLS_PROXY_URL || 'https://fortress-calltools-proxy.onrender.com',
+  scraper: process.env.SCRAPER_URL || 'https://fortress-cre-scraper.onrender.com',
+};
+
+const KEYS = {
+  sf: process.env.SF_PROXY_KEY || '',
+  calltools: process.env.CALLTOOLS_PROXY_KEY || '',
+  scraper: process.env.SCRAPER_API_KEY || '',
+};
+
+function send(res, code, body, type = 'application/json') {
+  res.writeHead(code, { 'content-type': type, 'access-control-allow-origin': '*' });
+  res.end(typeof body === 'string' ? body : JSON.stringify(body));
+}
+
+function serveStatic(req, res) {
+  const p = req.url === '/' ? '/index.html' : req.url;
+  const file = path.join(__dirname, 'public', p.replace(/\?.*$/, ''));
+  if (!file.startsWith(path.join(__dirname, 'public'))) return send(res, 403, 'forbidden', 'text/plain');
+  fs.readFile(file, (err, data) => {
+    if (err) return send(res, 404, 'not found', 'text/plain');
+    const ext = path.extname(file).toLowerCase();
+    const type = { '.html': 'text/html', '.css': 'text/css', '.js': 'application/javascript', '.svg': 'image/svg+xml' }[ext] || 'application/octet-stream';
+    send(res, 200, data, type);
+  });
+}
+
+// Proxy: POST or GET a JSON body to a backend service, return JSON.
+function proxy(target, body, method = 'POST') {
+  return new Promise((resolve, reject) => {
+    const u = new URL(target.url);
+    const opts = {
+      method,
+      hostname: u.hostname,
+      path: u.pathname + (u.search || ''),
+      headers: {
+        'content-type': 'application/json',
+        'authorization': `Bearer ${target.key}`,
+      },
+      timeout: 30000,
+    };
+    const req = https.request(opts, (r) => {
+      let d = '';
+      r.on('data', (c) => (d += c));
+      r.on('end', () => {
+        try { resolve({ status: r.statusCode, body: JSON.parse(d) }); }
+        catch { resolve({ status: r.statusCode, body: d }); }
+      });
+    });
+    req.on('error', reject);
+    req.on('timeout', () => req.destroy(new Error('timeout')));
+    if (body && method !== 'GET') req.write(JSON.stringify(body));
+    req.end();
+  });
+}
+
+// SOQL query via SF proxy — returns Salesforce query result.
+async function sfQuery(soql) {
+  return proxy(
+    { url: `${BACKENDS.sf}/soql?q=${encodeURIComponent(soql)}`, key: KEYS.sf },
+    null,
+    'GET'
+  );
+}
+
+async function callToolsRecent(limit = 20) {
+  return proxy(
+    { url: `${BACKENDS.calltools}/calls/recent?limit=${limit}`, key: KEYS.calltools },
+    null,
+    'GET'
+  );
+}
+
+async function callToolsSummary() {
+  return proxy(
+    { url: `${BACKENDS.calltools}/calls/summary`, key: KEYS.calltools },
+    null,
+    'GET'
+  );
+}
+
+async function scraperHealth() {
+  return new Promise((resolve) => {
+    const u = new URL(`${BACKENDS.scraper}/health`);
+    const r = https.get(u, (r) => {
+      let d = ''; r.on('data', c => d += c); r.on('end', () => resolve({ status: r.statusCode, body: d }));
+    });
+    r.on('error', () => resolve({ status: 0, body: 'down' }));
+    r.on('timeout', () => resolve({ status: 0, body: 'timeout' }));
+    r.setTimeout(5000);
+  });
+}
+
+// Convert SF Opportunity records into a bench-friendly shape.
+function shapeOpps(records = []) {
+  return records.map((r) => ({
+    id: r.Id,
+    name: r.Name,
+    stage: r.StageName,
+    amount: r.Amount,
+    close: r.CloseDate,
+    owner: r.Owner?.Name,
+    property: r.Property_Address__c || r.Name,
+    type: r.Left_Main__Property_Type__c,
+    size: r.Left_Main__Square_Footage__c,
+  }));
+}
+
+// Route table.
+async function handle(req, res) {
+  if (req.method === 'OPTIONS') return send(res, 204, '', 'text/plain');
+  const u = new URL(req.url, `http://${req.headers.host}`);
+  const p = u.pathname;
+
+  try {
+    // Bridge status
+    if (p === '/api/bridge') {
+      const h = await scraperHealth();
+      return send(res, 200, { connected: h.status === 200, backend: BACKENDS.scraper });
+    }
+
+    // KPI cards (per company)
+    if (p === '/api/kpis') {
+      const company = u.searchParams.get('company') || 'fortress';
+      const propFilter = company === 'apex'
+        ? "Left_Main__Property_Type__c = 'Multifamily'"
+        : "Left_Main__Property_Type__c IN ('Warehouse','Commercial','Industrial','Small Bay','Flex')";
+      const [oppsWeek, psaSigned, pipeline] = await Promise.all([
+        sfQuery(`SELECT COUNT() FROM Opportunity WHERE CreatedDate = THIS_WEEK AND ${propFilter}`),
+        sfQuery(`SELECT COUNT() FROM Opportunity WHERE StageName = 'Contract Signed' AND CloseDate = THIS_WEEK AND ${propFilter}`),
+        sfQuery(`SELECT SUM(Amount) total, COUNT(Id) count FROM Opportunity WHERE IsClosed = FALSE AND ${propFilter}`),
+      ]);
+      return send(res, 200, {
+        opps_this_week: oppsWeek.body?.totalSize || 0,
+        psas_signed_this_week: psaSigned.body?.totalSize || 0,
+        pipeline_value: pipeline.body?.records?.[0]?.total || 0,
+        pipeline_count: pipeline.body?.records?.[0]?.count || 0,
+      });
+    }
+
+    // Open opportunities table
+    if (p === '/api/opportunities') {
+      const company = u.searchParams.get('company') || 'fortress';
+      const propFilter = company === 'apex'
+        ? "Left_Main__Property_Type__c = 'Multifamily'"
+        : "Left_Main__Property_Type__c IN ('Warehouse','Commercial','Industrial','Small Bay','Flex')";
+      const r = await sfQuery(`SELECT Id, Name, StageName, Amount, CloseDate, Owner.Name, Property_Address__c, Left_Main__Property_Type__c, Left_Main__Square_Footage__c FROM Opportunity WHERE IsClosed = FALSE AND ${propFilter} ORDER BY Amount DESC NULLS LAST LIMIT 50`);
+      return send(res, 200, { opportunities: shapeOpps(r.body?.records || []) });
+    }
+
+    // Lead bench (Awaiting action, sorted by value)
+    if (p === '/api/leads') {
+      const company = u.searchParams.get('company') || 'fortress';
+      const propFilter = company === 'apex'
+        ? "Left_Main__Property_Type__c = 'Multifamily'"
+        : "Left_Main__Property_Type__c IN ('Warehouse','Commercial','Industrial','Small Bay','Flex')";
+      const r = await sfQuery(`SELECT Id, Name, Status, Company, LastModifiedDate, Left_Main__Property_Type__c, Left_Main__Square_Footage__c, Left_Main__Asking_Price__c, City, State FROM Lead WHERE IsConverted = FALSE AND ${propFilter} ORDER BY Left_Main__Asking_Price__c DESC NULLS LAST LIMIT 25`);
+      return send(res, 200, { leads: (r.body?.records || []).map((l) => ({
+        id: l.Id,
+        name: l.Name,
+        property_type: l.Left_Main__Property_Type__c,
+        size: l.Left_Main__Square_Footage__c,
+        city: l.City,
+        state: l.State,
+        stage: l.Status,
+        value: l.Left_Main__Asking_Price__c,
+      })) });
+    }
+
+    // Recent calls leaderboard (from Call Tools)
+    if (p === '/api/calls') {
+      const r = await callToolsRecent(200);
+      return send(res, 200, r.body);
+    }
+
+    if (p === '/api/calls/summary') {
+      const r = await callToolsSummary();
+      return send(res, 200, r.body);
+    }
+
+    // Fallback: static files
+    return serveStatic(req, res);
+  } catch (err) {
+    console.error(p, err.message);
+    return send(res, 500, { error: 'server_error', message: err.message });
+  }
+}
+
+http.createServer(handle).listen(PORT, () => {
+  console.log(`fortress-command-center listening on ${PORT}`);
+});

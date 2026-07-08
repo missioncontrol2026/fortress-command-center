@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Fortress Mission Control · Command Center</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="brand-dark">Fortress Holdings</span> <span class="brand-gold">Mission Control</span></div>
+    <nav class="tabs">
+      <button class="tab" data-view="daily">Daily View</button>
+      <button class="tab active" data-view="command">Command Center</button>
+      <button class="tab" data-view="roster">Agents Roster</button>
+    </nav>
+    <div class="company-toggle">
+      <button class="company active" data-company="fortress">FORTRESS HOLDINGS</button>
+      <button class="company" data-company="apex">APEX CAPITAL</button>
+    </div>
+  </header>
+
+  <div class="actions-bar">
+    <button class="refresh" id="refresh">↻ Refresh</button>
+    <span class="refreshed" id="refreshed"></span>
+    <span class="bridge" id="bridge">Bridge: checking…</span>
+  </div>
+
+  <main id="view-command" class="view active">
+    <div class="section-head">
+      <h1>Fortress Holdings <span class="gold">Command Center</span></h1>
+      <p class="sub" id="snapshot-time">Live snapshot</p>
+    </div>
+
+    <div class="kpi-row">
+      <div class="kpi-card"><div class="kpi-label">OPPORTUNITIES THIS WEEK</div><div class="kpi-value" id="kpi-opps">—</div><div class="kpi-sub">Target: 4 / week · live SF</div></div>
+      <div class="kpi-card"><div class="kpi-label">PSAS SENT THIS WEEK</div><div class="kpi-value" id="kpi-psas">—</div><div class="kpi-sub">Target: 2 / week · live SF</div></div>
+      <div class="kpi-card"><div class="kpi-label">SIGNED PSAS THIS WEEK</div><div class="kpi-value" id="kpi-signed">—</div><div class="kpi-sub">Target: 1 / week · live SF</div></div>
+      <div class="kpi-card"><div class="kpi-label">OPEN PIPELINE VALUE</div><div class="kpi-value" id="kpi-pipeline">—</div><div class="kpi-sub" id="kpi-pipeline-sub">— open opps · live from SF</div></div>
+    </div>
+
+    <div class="panel">
+      <h2>Q3 2026 Goals</h2>
+      <table class="table">
+        <thead><tr><th>KPI</th><th>Actual</th><th>Target</th><th>Progress</th><th>Pace</th></tr></thead>
+        <tbody id="goals-body"><tr><td colspan="5" class="loading">Loading…</td></tr></tbody>
+      </table>
+    </div>
+
+    <div class="panel">
+      <h2 class="leaderboard-title">Fortress Holdings — <span class="metric-tag">Leaderboard</span> <span class="metric-tag-sub" id="calls-sub">Recent Calls · Live from Call Tools</span></h2>
+      <table class="table leaderboard">
+        <thead><tr><th>RANK</th><th>AGENT</th><th>CALLS</th><th>INBOUND</th><th>OUTBOUND</th><th>+3MIN</th><th>DURATION</th><th>SCORE</th></tr></thead>
+        <tbody id="leaderboard-body"><tr><td colspan="8" class="loading">Loading…</td></tr></tbody>
+      </table>
+    </div>
+
+    <div class="panel">
+      <h2>Open Opportunities <span class="metric-tag-sub" id="opps-count">· Live</span></h2>
+      <table class="table opportunities">
+        <thead><tr><th>ASSET</th><th>LOCATION</th><th>STAGE</th><th>OWNER · AMOUNT</th><th>ACTION</th></tr></thead>
+        <tbody id="opps-body"><tr><td colspan="5" class="loading">Loading…</td></tr></tbody>
+      </table>
+    </div>
+  </main>
+
+  <main id="view-daily" class="view">
+    <div class="section-head">
+      <h1>Fortress Holdings <span class="gold">Mission Control</span></h1>
+      <p class="sub" id="daily-time"></p>
+    </div>
+    <div class="kpi-row-3">
+      <div class="kpi-card dark"><div class="kpi-label">OPEN LEADS</div><div class="kpi-value" id="d-open-leads">—</div><div class="kpi-sub" id="d-open-leads-sub">—</div></div>
+      <div class="kpi-card dark"><div class="kpi-label">ACTIVE OPPS</div><div class="kpi-value" id="d-active-opps">—</div><div class="kpi-sub" id="d-active-opps-sub">—</div></div>
+      <div class="kpi-card dark"><div class="kpi-label">CALLS TODAY</div><div class="kpi-value" id="d-calls-today">—</div><div class="kpi-sub">from Call Tools</div></div>
+    </div>
+    <div class="two-col">
+      <div class="panel">
+        <h2>Lead Bench — Awaiting Action</h2>
+        <table class="table">
+          <thead><tr><th>LEAD</th><th>PROPERTY</th><th>STAGE</th><th>VALUE ▼</th></tr></thead>
+          <tbody id="lead-bench-body"><tr><td colspan="4" class="loading">Loading…</td></tr></tbody>
+        </table>
+      </div>
+      <div class="panel">
+        <h2>Today's Calls <span class="metric-tag">LIVE</span></h2>
+        <div id="today-calls-summary" class="calls-summary">Dials today: — · Connects: — · Avg duration: —</div>
+        <table class="table">
+          <thead><tr><th>#</th><th>AGENT</th><th>CALLS</th><th>OUT</th><th>3MIN+</th><th>DUR</th></tr></thead>
+          <tbody id="today-calls-body"><tr><td colspan="6" class="loading">Loading…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </main>
+
+  <main id="view-roster" class="view">
+    <div class="section-head">
+      <h1>Agents Roster</h1>
+      <p class="sub">All AI agents wired into Mission Control. Click one to see its capability set + example prompts.</p>
+    </div>
+    <div class="agent-grid">
+      <div class="agent-card"><h3>F1 · Lead Enrichment</h3><p>Enrich untouched leads with property + owner data from CoStar, Reonomy, public records. Batches of 10.</p></div>
+      <div class="agent-card"><h3>F2 · List Builder</h3><p>Build off-market property lists by market + criteria. CoStar-first.</p></div>
+      <div class="agent-card"><h3>F3 · Buyer Research</h3><p>Find active buyers matching a deal. CoStar-first. Cross-references SF, never duplicates.</p></div>
+      <div class="agent-card"><h3>F4 · Salesforce Ops</h3><p>All-purpose SF admin: create leads, update stages, merge duplicates, build dashboards.</p></div>
+      <div class="agent-card"><h3>F5 · PSA Prep (Seller)</h3><p>Fills PSA template, drafts cover email, writes to Google Drive. 1% earnest default.</p></div>
+      <div class="agent-card"><h3>F6 · Deal Package (Buyer OM)</h3><p>Generates the OM + deal package for buyers when a deal goes under contract. Writes to Drive.</p></div>
+      <div class="agent-card"><h3>F7 · Morning Briefing (Jarvis)</h3><p>Daily 6am briefing: top acquisition/disposition/operational actions.</p></div>
+      <div class="agent-card"><h3>F8 · Call QA</h3><p>Scores Call Tools recordings against Fortress rubric. Weekly coaching.</p></div>
+      <div class="agent-card apex"><h3>Apex bench</h3><p>Same suite for Apex Capital, multifamily-scoped. Unit-count segmented across Andrew / Jarrett / Brent.</p></div>
+    </div>
+  </main>
+
+  <footer><span class="build">v1 · Command Center</span></footer>
+
+  <script src="/app.js"></script>
+</body>
+</html>
