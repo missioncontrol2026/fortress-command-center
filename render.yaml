@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: fortress-command-center
+    runtime: node
+    plan: starter
+    branch: main
+    buildCommand: npm install
+    startCommand: node server.js
+    envVars:
+      - key: SF_PROXY_URL
+        value: https://fortress-sf-proxy.onrender.com
+      - key: SF_PROXY_KEY
+        sync: false
+      - key: CALLTOOLS_PROXY_URL
+        value: https://fortress-calltools-proxy.onrender.com
+      - key: CALLTOOLS_PROXY_KEY
+        sync: false
+      - key: SCRAPER_URL
+        value: https://fortress-cre-scraper.onrender.com
+      - key: SCRAPER_API_KEY
+        sync: false
