@@ -72,7 +72,7 @@ function proxy(target, body, method = 'POST') {
 // SOQL query via SF proxy — returns Salesforce query result.
 async function sfQuery(soql) {
   return proxy(
-    { url: `${BACKENDS.sf}/soql?q=${encodeURIComponent(soql)}`, key: KEYS.sf },
+    { url: `${BACKENDS.sf}/services/data/v58.0/query/?q=${encodeURIComponent(soql)}`, key: KEYS.sf },
     null,
     'GET'
   );
