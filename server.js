@@ -24,7 +24,8 @@ const KEYS = {
 
 function send(res, code, body, type = 'application/json') {
   res.writeHead(code, { 'content-type': type, 'access-control-allow-origin': '*' });
-  res.end(typeof body === 'string' ? body : JSON.stringify(body));
+  if (typeof body === 'string' || Buffer.isBuffer(body)) return res.end(body);
+  res.end(JSON.stringify(body));
 }
 
 function serveStatic(req, res) {
