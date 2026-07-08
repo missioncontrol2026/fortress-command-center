@@ -193,11 +193,16 @@ async function handle(req, res) {
       })) });
     }
 
-    // Recent calls leaderboard (from Call Tools) - aggregated by agent
+    // Legacy raw calls passthrough
     if (p === '/api/calls') {
       const r = await callToolsRecent(200);
+      return send(res, 200, r.body);
+    }
+
+    // Frontend uses this endpoint for the leaderboard (dashboard's Fortress Holdings section)
+    if (p === '/api/calls/summary') {
+      const r = await callToolsRecent(200);
       const results = r.body?.results || [];
-      // Aggregate by app_user (agent id)
       const byAgent = {};
       for (const call of results) {
         const key = call.app_user || call.clicker_agent_id || 'unknown';
@@ -226,12 +231,6 @@ async function handle(req, res) {
       const avgDur = totalConnects ? Math.round(results.reduce((a, cc) => a + (Number(cc.duration) || 0), 0) / totalConnects) : 0;
       const today = { dials: totalDials, connects: totalConnects, avg_duration: avgDur };
       return send(res, 200, { leaderboard, today, agents: leaderboard, total_calls: results.length, _debug: { upstream: r.status } });
-    }
-
-    if (p === '/api/calls/summary') {
-      const r = await callToolsSummary();
-      const count = r.body?.count || 0;
-      return send(res, 200, { total_calls_all_time: count, _debug: { upstream: r.status } });
     }
 
     // Fallback: static files
