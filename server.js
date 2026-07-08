@@ -80,7 +80,7 @@ async function sfQuery(soql) {
 
 async function callToolsRecent(limit = 20) {
   return proxy(
-    { url: `${BACKENDS.calltools}/api/v1/calls/?limit=${limit}&ordering=-created_at`, key: KEYS.calltools },
+    { url: `${BACKENDS.calltools}/api/calls/?page=1&page_size=${limit}&ordering=-created`, key: KEYS.calltools },
     null,
     'GET'
   );
@@ -88,7 +88,7 @@ async function callToolsRecent(limit = 20) {
 
 async function callToolsSummary() {
   return proxy(
-    { url: `${BACKENDS.calltools}/api/v1/calls/?limit=1&ordering=-created_at`, key: KEYS.calltools },
+    { url: `${BACKENDS.calltools}/api/calls/?page=1&page_size=1&ordering=-created`, key: KEYS.calltools },
     null,
     'GET'
   );
