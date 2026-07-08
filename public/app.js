@@ -106,7 +106,7 @@ async function loadOpportunities() {
 
 async function loadCalls() {
   try {
-    const summary = await fetchJSON('/api/calls/summary?period=' + (window.__leaderboardPeriod || 'today'));
+    const summary = await fetchJSON('/api/calls/summary?period=' + (window.__leaderboardPeriod || 'all'));
     if (summary?.leaderboard) renderLeaderboard(summary.leaderboard);
     if (summary?.today) renderTodayCalls(summary.today);
   } catch (e) { console.error('calls', e); }
@@ -279,7 +279,7 @@ setInterval(refresh, 60000); // auto-refresh every 60s
 
 
 // Period toggle wiring (added 2026-07-08)
-window.__leaderboardPeriod = window.__leaderboardPeriod || 'today';
+window.__leaderboardPeriod = window.__leaderboardPeriod || 'all';
 function wirePeriodToggle() {
   const btns = document.querySelectorAll('[data-period]');
   btns.forEach(b => {
