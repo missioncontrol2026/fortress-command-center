@@ -86,6 +86,23 @@ async function callToolsRecent(limit = 20) {
   );
 }
 
+const _agentNameCache = {};
+async function resolveAgentName(uuid) {
+  if (!uuid || uuid === 'unknown') return uuid;
+  if (_agentNameCache[uuid]) return _agentNameCache[uuid];
+  try {
+    const r = await proxy(
+      { url: `${BACKENDS.calltools}/api/users/${uuid}/`, key: KEYS.calltools },
+      null,
+      'GET'
+    );
+    const u = r.body || {};
+    const name = [u.first_name, u.last_name].filter(Boolean).join(' ').trim() || u.username || u.email || uuid.slice(0, 8);
+    _agentNameCache[uuid] = name;
+    return name;
+  } catch { return uuid.slice(0, 8); }
+}
+
 async function callToolsSummary() {
   return proxy(
     { url: `${BACKENDS.calltools}/api/calls/?page=1&page_size=1&ordering=-created`, key: KEYS.calltools },
@@ -214,18 +231,18 @@ async function handle(req, res) {
         row.duration += dur;
         if (dur >= 180) row.over3min += 1;
       }
-      const leaderboard = Object.values(byAgent)
-        .sort((a, b) => b.calls - a.calls)
-        .map((row, i) => ({
-          rank: i + 1,
-          agent: row.agent,
-          calls: row.calls,
-          inbound: row.inbound,
-          outbound: row.outbound,
-          plus_3min: row.over3min,
-          duration_seconds: row.duration,
-          score: row.calls + row.over3min * 2,
-        }));
+      const sorted = Object.values(byAgent).sort((a, b) => b.calls - a.calls);
+      const names = await Promise.all(sorted.slice(0, 20).map(row => resolveAgentName(row.agent)));
+      const leaderboard = sorted.map((row, i) => ({
+        rank: i + 1,
+        agent: names[i] || row.agent,
+        calls: row.calls,
+        inbound: row.inbound,
+        outbound: row.outbound,
+        plus_3min: row.over3min,
+        duration_seconds: row.duration,
+        score: row.calls + row.over3min * 2,
+      }));
       const totalDials = results.length;
       const totalConnects = results.filter(cc => (Number(cc.duration) || 0) > 0).length;
       const avgDur = totalConnects ? Math.round(results.reduce((a, cc) => a + (Number(cc.duration) || 0), 0) / totalConnects) : 0;
