@@ -106,7 +106,7 @@ async function loadOpportunities() {
 
 async function loadCalls() {
   try {
-    const summary = await fetchJSON('/api/calls/summary');
+    const summary = await fetchJSON('/api/calls/summary?period=' + (window.__leaderboardPeriod || 'today'));
     if (summary?.leaderboard) renderLeaderboard(summary.leaderboard);
     if (summary?.today) renderTodayCalls(summary.today);
   } catch (e) { console.error('calls', e); }
@@ -276,3 +276,21 @@ document.getElementById('refresh').addEventListener('click', refresh);
 refresh();
 renderCapabilities();
 setInterval(refresh, 60000); // auto-refresh every 60s
+
+
+// Period toggle wiring (added 2026-07-08)
+window.__leaderboardPeriod = window.__leaderboardPeriod || 'today';
+function wirePeriodToggle() {
+  const btns = document.querySelectorAll('[data-period]');
+  btns.forEach(b => {
+    b.onclick = () => {
+      window.__leaderboardPeriod = b.dataset.period;
+      btns.forEach(x => x.classList.toggle('active', x === b));
+      if (typeof refresh === 'function') refresh();
+    };
+  });
+  const el = document.getElementById('leaderboard-date');
+  if (el) el.textContent = new Date().toLocaleDateString('en-US', {weekday:'long', year:'numeric', month:'long', day:'numeric'});
+}
+document.addEventListener('DOMContentLoaded', wirePeriodToggle);
+if (document.readyState !== 'loading') wirePeriodToggle();
