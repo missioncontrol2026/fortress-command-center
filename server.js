@@ -193,15 +193,41 @@ async function handle(req, res) {
       })) });
     }
 
-    // Recent calls leaderboard (from Call Tools)
+    // Recent calls leaderboard (from Call Tools) - aggregated by agent
     if (p === '/api/calls') {
       const r = await callToolsRecent(200);
-      return send(res, 200, r.body);
+      const results = r.body?.results || [];
+      // Aggregate by app_user (agent id)
+      const byAgent = {};
+      for (const call of results) {
+        const key = call.app_user || call.clicker_agent_id || 'unknown';
+        if (!byAgent[key]) byAgent[key] = { agent: key, calls: 0, inbound: 0, outbound: 0, over3min: 0, duration: 0 };
+        const row = byAgent[key];
+        row.calls += 1;
+        if (call.inbound) row.inbound += 1; else row.outbound += 1;
+        const dur = Number(call.duration) || 0;
+        row.duration += dur;
+        if (dur >= 180) row.over3min += 1;
+      }
+      const leaderboard = Object.values(byAgent)
+        .sort((a, b) => b.calls - a.calls)
+        .map((row, i) => ({
+          rank: i + 1,
+          agent: row.agent,
+          calls: row.calls,
+          inbound: row.inbound,
+          outbound: row.outbound,
+          over3min: row.over3min,
+          duration_sec: row.duration,
+          score: row.calls + row.over3min * 2,
+        }));
+      return send(res, 200, { leaderboard, total_calls: results.length, _debug: { upstream: r.status } });
     }
 
     if (p === '/api/calls/summary') {
       const r = await callToolsSummary();
-      return send(res, 200, r.body);
+      const count = r.body?.count || 0;
+      return send(res, 200, { total_calls_all_time: count, _debug: { upstream: r.status } });
     }
 
     // Fallback: static files
