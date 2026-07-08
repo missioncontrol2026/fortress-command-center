@@ -217,11 +217,15 @@ async function handle(req, res) {
           calls: row.calls,
           inbound: row.inbound,
           outbound: row.outbound,
-          over3min: row.over3min,
-          duration_sec: row.duration,
+          plus_3min: row.over3min,
+          duration_seconds: row.duration,
           score: row.calls + row.over3min * 2,
         }));
-      return send(res, 200, { leaderboard, total_calls: results.length, _debug: { upstream: r.status } });
+      const totalDials = results.length;
+      const totalConnects = results.filter(cc => (Number(cc.duration) || 0) > 0).length;
+      const avgDur = totalConnects ? Math.round(results.reduce((a, cc) => a + (Number(cc.duration) || 0), 0) / totalConnects) : 0;
+      const today = { dials: totalDials, connects: totalConnects, avg_duration: avgDur };
+      return send(res, 200, { leaderboard, today, agents: leaderboard, total_calls: results.length, _debug: { upstream: r.status } });
     }
 
     if (p === '/api/calls/summary') {
