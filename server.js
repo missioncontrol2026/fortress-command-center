@@ -217,12 +217,25 @@ async function handle(req, res) {
     }
 
     // Frontend uses this endpoint for the leaderboard (dashboard's Fortress Holdings section)
+    // Supports ?period=today|week|all (default: all/last 200)
     if (p === '/api/calls/summary') {
-      const r = await callToolsRecent(200);
-      const results = r.body?.results || [];
+      const period = u.searchParams.get('period') || 'today';
+      const pageSize = period === 'week' ? 500 : 200;
+      const r = await callToolsRecent(pageSize);
+      const rawResults = r.body?.results || [];
+      const now = new Date();
+      const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      const weekAgo = new Date(todayStart.getTime() - 6 * 24 * 3600 * 1000);
+      const results = rawResults.filter(cc => {
+        if (period === 'all') return true;
+        const d = new Date(cc.start || cc.created_on);
+        if (isNaN(d.getTime())) return period === 'all';
+        return period === 'today' ? d >= todayStart : d >= weekAgo;
+      });
       const byAgent = {};
       for (const call of results) {
-        const key = call.app_user || call.clicker_agent_id || 'unknown';
+        // Prefer clicker_agent_id (individual person) over app_user (seat)
+        const key = call.clicker_agent_id || call.app_user || 'unknown';
         if (!byAgent[key]) byAgent[key] = { agent: key, calls: 0, inbound: 0, outbound: 0, over3min: 0, duration: 0 };
         const row = byAgent[key];
         row.calls += 1;
@@ -247,7 +260,8 @@ async function handle(req, res) {
       const totalConnects = results.filter(cc => (Number(cc.duration) || 0) > 0).length;
       const avgDur = totalConnects ? Math.round(results.reduce((a, cc) => a + (Number(cc.duration) || 0), 0) / totalConnects) : 0;
       const today = { dials: totalDials, connects: totalConnects, avg_duration: avgDur };
-      return send(res, 200, { leaderboard, today, agents: leaderboard, total_calls: results.length, _debug: { upstream: r.status } });
+      const dateLabel = todayStart.toISOString().slice(0, 10);
+      return send(res, 200, { leaderboard, today, agents: leaderboard, period, date: dateLabel, total_calls: results.length, _debug: { upstream: r.status, pageSize } });
     }
 
     // Fallback: static files
