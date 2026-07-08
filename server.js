@@ -140,13 +140,14 @@ async function handle(req, res) {
     // and its actual values in the org, we can add per-company filtering back.
     if (p === '/api/kpis') {
       const [
-        oppsWeek, psaSentWeek, psaSignedWeek, pipeline,
+        oppsWeek, psaSentWeek, psaSignedWeek, pipelineSum, pipelineCount,
         oppsQtr, psaSentQtr, closedWonQtr, leadsQtr,
       ] = await Promise.all([
         sfQuery(`SELECT COUNT() FROM Opportunity WHERE CreatedDate = THIS_WEEK`),
         sfQuery(`SELECT COUNT() FROM Opportunity WHERE StageName LIKE '%PSA%' AND LastModifiedDate = THIS_WEEK`),
         sfQuery(`SELECT COUNT() FROM Opportunity WHERE (StageName LIKE '%Signed%' OR StageName LIKE '%Contract%' OR IsWon = TRUE) AND LastModifiedDate = THIS_WEEK`),
-        sfQuery(`SELECT SUM(Amount) sumAmt, COUNT(Id) numOpps FROM Opportunity WHERE IsClosed = FALSE`),
+        sfQuery(`SELECT SUM(Amount) FROM Opportunity WHERE IsClosed = FALSE`),
+        sfQuery(`SELECT COUNT() FROM Opportunity WHERE IsClosed = FALSE`),
         sfQuery(`SELECT COUNT() FROM Opportunity WHERE CreatedDate = THIS_QUARTER`),
         sfQuery(`SELECT COUNT() FROM Opportunity WHERE StageName LIKE '%PSA%' AND LastModifiedDate = THIS_QUARTER`),
         sfQuery(`SELECT COUNT() FROM Opportunity WHERE IsWon = TRUE AND CloseDate = THIS_QUARTER`),
@@ -156,8 +157,8 @@ async function handle(req, res) {
         opps_this_week: oppsWeek.body?.totalSize || 0,
         psas_sent_this_week: psaSentWeek.body?.totalSize || 0,
         psas_signed_this_week: psaSignedWeek.body?.totalSize || 0,
-        pipeline_value: (pipeline.body?.records?.[0]?.sumAmt ?? pipeline.body?.records?.[0]?.expr0) || 0,
-        pipeline_count: (pipeline.body?.records?.[0]?.numOpps ?? pipeline.body?.records?.[0]?.expr1) || 0,
+        pipeline_value: pipelineSum.body?.records?.[0]?.expr0 || 0,
+        pipeline_count: pipelineCount.body?.totalSize || 0,
         quarter: {
           opps: oppsQtr.body?.totalSize || 0,
           psas_sent: psaSentQtr.body?.totalSize || 0,
@@ -166,7 +167,7 @@ async function handle(req, res) {
         },
         _debug: {
           oppsWeek_status: oppsWeek.status,
-          pipeline_status: pipeline.status,
+          pipelineSum_status: pipelineSum.status, pipelineCount_status: pipelineCount.status,
         },
       });
     }
