@@ -80,7 +80,7 @@ async function sfQuery(soql) {
 
 async function callToolsRecent(limit = 20) {
   return proxy(
-    { url: `${BACKENDS.calltools}/calls/recent?limit=${limit}`, key: KEYS.calltools },
+    { url: `${BACKENDS.calltools}/api/v1/calls/?limit=${limit}&ordering=-created_at`, key: KEYS.calltools },
     null,
     'GET'
   );
@@ -88,7 +88,7 @@ async function callToolsRecent(limit = 20) {
 
 async function callToolsSummary() {
   return proxy(
-    { url: `${BACKENDS.calltools}/calls/summary`, key: KEYS.calltools },
+    { url: `${BACKENDS.calltools}/api/v1/calls/?limit=1&ordering=-created_at`, key: KEYS.calltools },
     null,
     'GET'
   );
@@ -146,7 +146,7 @@ async function handle(req, res) {
         sfQuery(`SELECT COUNT() FROM Opportunity WHERE CreatedDate = THIS_WEEK`),
         sfQuery(`SELECT COUNT() FROM Opportunity WHERE StageName LIKE '%PSA%' AND LastModifiedDate = THIS_WEEK`),
         sfQuery(`SELECT COUNT() FROM Opportunity WHERE (StageName LIKE '%Signed%' OR StageName LIKE '%Contract%' OR IsWon = TRUE) AND LastModifiedDate = THIS_WEEK`),
-        sfQuery(`SELECT SUM(Amount) total, COUNT(Id) count FROM Opportunity WHERE IsClosed = FALSE`),
+        sfQuery(`SELECT SUM(Amount) total, COUNT(Id) opp_count FROM Opportunity WHERE IsClosed = FALSE`),
         sfQuery(`SELECT COUNT() FROM Opportunity WHERE CreatedDate = THIS_QUARTER`),
         sfQuery(`SELECT COUNT() FROM Opportunity WHERE StageName LIKE '%PSA%' AND LastModifiedDate = THIS_QUARTER`),
         sfQuery(`SELECT COUNT() FROM Opportunity WHERE IsWon = TRUE AND CloseDate = THIS_QUARTER`),
@@ -157,7 +157,7 @@ async function handle(req, res) {
         psas_sent_this_week: psaSentWeek.body?.totalSize || 0,
         psas_signed_this_week: psaSignedWeek.body?.totalSize || 0,
         pipeline_value: pipeline.body?.records?.[0]?.total || 0,
-        pipeline_count: pipeline.body?.records?.[0]?.count || 0,
+        pipeline_count: pipeline.body?.records?.[0]?.opp_count || 0,
         quarter: {
           opps: oppsQtr.body?.totalSize || 0,
           psas_sent: psaSentQtr.body?.totalSize || 0,
