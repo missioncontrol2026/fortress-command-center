@@ -35,7 +35,7 @@ function serveStatic(req, res) {
   fs.readFile(file, (err, data) => {
     if (err) return send(res, 404, 'not found', 'text/plain');
     const ext = path.extname(file).toLowerCase();
-    const type = { '.html': 'text/html', '.css': 'text/css', '.js': 'application/javascript', '.svg': 'image/svg+xml' }[ext] || 'application/octet-stream';
+    const type = { '.html': 'text/html', '.css': 'text/css', '.js': 'application/javascript', '.svg': 'image/svg+xml', '.zip': 'application/zip', '.png': 'image/png' }[ext] || 'application/octet-stream';
     send(res, 200, data, type);
   });
 }
@@ -134,22 +134,38 @@ async function handle(req, res) {
       return send(res, 200, { connected: h.status === 200, backend: BACKENDS.scraper });
     }
 
-    // KPI cards (per company)
+    // KPI cards (per company) + Q3 quarterly goals in one call
     if (p === '/api/kpis') {
       const company = u.searchParams.get('company') || 'fortress';
+      // Fortress = industrial; Apex = multifamily (multifamily uses either field name)
       const propFilter = company === 'apex'
-        ? "Left_Main__Property_Type__c = 'Multifamily'"
+        ? "(Left_Main__Property_Type__c = 'Multifamily' OR Property_Type__c = 'Multifamily')"
         : "Left_Main__Property_Type__c IN ('Warehouse','Commercial','Industrial','Small Bay','Flex')";
-      const [oppsWeek, psaSigned, pipeline] = await Promise.all([
+      const [
+        oppsWeek, psaSentWeek, psaSignedWeek, pipeline,
+        oppsQtr, psaSentQtr, closedWonQtr, leadsQtr,
+      ] = await Promise.all([
         sfQuery(`SELECT COUNT() FROM Opportunity WHERE CreatedDate = THIS_WEEK AND ${propFilter}`),
-        sfQuery(`SELECT COUNT() FROM Opportunity WHERE StageName = 'Contract Signed' AND CloseDate = THIS_WEEK AND ${propFilter}`),
+        sfQuery(`SELECT COUNT() FROM Opportunity WHERE StageName IN ('PSA Sent','Negotiation','Sent for Signatures','Closed','Contract Signed','Closed Won') AND LastModifiedDate = THIS_WEEK AND ${propFilter}`),
+        sfQuery(`SELECT COUNT() FROM Opportunity WHERE StageName IN ('Contract Signed','Closed Won') AND LastModifiedDate = THIS_WEEK AND ${propFilter}`),
         sfQuery(`SELECT SUM(Amount) total, COUNT(Id) count FROM Opportunity WHERE IsClosed = FALSE AND ${propFilter}`),
+        sfQuery(`SELECT COUNT() FROM Opportunity WHERE CreatedDate = THIS_QUARTER AND ${propFilter}`),
+        sfQuery(`SELECT COUNT() FROM Opportunity WHERE StageName IN ('PSA Sent','Negotiation','Sent for Signatures','Closed','Contract Signed','Closed Won') AND LastModifiedDate = THIS_QUARTER AND ${propFilter}`),
+        sfQuery(`SELECT COUNT() FROM Opportunity WHERE IsWon = TRUE AND CloseDate = THIS_QUARTER AND ${propFilter}`),
+        sfQuery(`SELECT COUNT() FROM Lead WHERE CreatedDate = THIS_QUARTER AND ${propFilter}`),
       ]);
       return send(res, 200, {
         opps_this_week: oppsWeek.body?.totalSize || 0,
-        psas_signed_this_week: psaSigned.body?.totalSize || 0,
+        psas_sent_this_week: psaSentWeek.body?.totalSize || 0,
+        psas_signed_this_week: psaSignedWeek.body?.totalSize || 0,
         pipeline_value: pipeline.body?.records?.[0]?.total || 0,
         pipeline_count: pipeline.body?.records?.[0]?.count || 0,
+        quarter: {
+          opps: oppsQtr.body?.totalSize || 0,
+          psas_sent: psaSentQtr.body?.totalSize || 0,
+          closed_won: closedWonQtr.body?.totalSize || 0,
+          new_leads: leadsQtr.body?.totalSize || 0,
+        },
       });
     }
 

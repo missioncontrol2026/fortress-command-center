@@ -12,7 +12,7 @@
     <nav class="tabs">
       <button class="tab" data-view="daily">Daily View</button>
       <button class="tab active" data-view="command">Command Center</button>
-      <button class="tab" data-view="roster">Agents Roster</button>
+      <button class="tab" data-view="capabilities">Capabilities</button>
     </nav>
     <div class="company-toggle">
       <button class="company active" data-company="fortress">FORTRESS HOLDINGS</button>
@@ -93,21 +93,34 @@
     </div>
   </main>
 
-  <main id="view-roster" class="view">
+  <main id="view-capabilities" class="view">
     <div class="section-head">
-      <h1>Agents Roster</h1>
-      <p class="sub">All AI agents wired into Mission Control. Click one to see its capability set + example prompts.</p>
+      <h1>Capabilities</h1>
+      <p class="sub">Everything the Mission Control assistant can do for Fortress + Apex. Copy any prompt below into LibreChat.</p>
     </div>
-    <div class="agent-grid">
-      <div class="agent-card"><h3>F1 · Lead Enrichment</h3><p>Enrich untouched leads with property + owner data from CoStar, Reonomy, public records. Batches of 10.</p></div>
-      <div class="agent-card"><h3>F2 · List Builder</h3><p>Build off-market property lists by market + criteria. CoStar-first.</p></div>
-      <div class="agent-card"><h3>F3 · Buyer Research</h3><p>Find active buyers matching a deal. CoStar-first. Cross-references SF, never duplicates.</p></div>
-      <div class="agent-card"><h3>F4 · Salesforce Ops</h3><p>All-purpose SF admin: create leads, update stages, merge duplicates, build dashboards.</p></div>
-      <div class="agent-card"><h3>F5 · PSA Prep (Seller)</h3><p>Fills PSA template, drafts cover email, writes to Google Drive. 1% earnest default.</p></div>
-      <div class="agent-card"><h3>F6 · Deal Package (Buyer OM)</h3><p>Generates the OM + deal package for buyers when a deal goes under contract. Writes to Drive.</p></div>
-      <div class="agent-card"><h3>F7 · Morning Briefing (Jarvis)</h3><p>Daily 6am briefing: top acquisition/disposition/operational actions.</p></div>
-      <div class="agent-card"><h3>F8 · Call QA</h3><p>Scores Call Tools recordings against Fortress rubric. Weekly coaching.</p></div>
-      <div class="agent-card apex"><h3>Apex bench</h3><p>Same suite for Apex Capital, multifamily-scoped. Unit-count segmented across Andrew / Jarrett / Brent.</p></div>
+
+    <div class="panel">
+      <h2>Step 1 · Install the Chrome bridge extension</h2>
+      <p class="sub">Required for CoStar + Reonomy pulls (uses your logged-in browser so no separate credentials or bot-blocks).</p>
+      <ol class="cap-steps">
+        <li><a href="/downloads/fortress-mc-bridge.zip" class="dl-btn" download>⬇ Download fortress-mc-bridge.zip</a></li>
+        <li>Unzip to a folder you'll keep (e.g. <code>~/Desktop/fortress-mc-bridge/</code>).</li>
+        <li>Open Chrome → <code>chrome://extensions</code></li>
+        <li>Toggle <strong>Developer mode</strong> (top right)</li>
+        <li>Click <strong>Load unpacked</strong> → select the unzipped folder</li>
+        <li>Pin the extension. It shows a green dot when connected to the scraper backend.</li>
+        <li>Make sure you're logged in to CoStar + Reonomy in the same Chrome profile.</li>
+      </ol>
+    </div>
+
+    <div class="panel">
+      <h2><span class="brand-dark">Fortress</span> <span class="brand-gold">— what the assistant can do</span></h2>
+      <div class="cap-grid" id="cap-fortress"></div>
+    </div>
+
+    <div class="panel">
+      <h2><span class="brand-dark">Apex</span> <span class="brand-gold">— what the assistant can do</span></h2>
+      <div class="cap-grid" id="cap-apex"></div>
     </div>
   </main>
 

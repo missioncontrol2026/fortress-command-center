@@ -41,8 +41,8 @@ async function loadKPIs() {
   try {
     const k = await fetchJSON(`/api/kpis?company=${state.company}`);
     document.getElementById('kpi-opps').textContent = fmtInt(k.opps_this_week);
-    document.getElementById('kpi-psas').textContent = fmtInt(k.psas_signed_this_week || 0);
-    document.getElementById('kpi-signed').textContent = fmtInt(k.psas_signed_this_week);
+    document.getElementById('kpi-psas').textContent = fmtInt(k.psas_sent_this_week || 0);
+    document.getElementById('kpi-signed').textContent = fmtInt(k.psas_signed_this_week || 0);
     document.getElementById('kpi-pipeline').textContent = fmt$(k.pipeline_value);
     document.getElementById('kpi-pipeline-sub').textContent = `${fmtInt(k.pipeline_count)} open opps · live from SF`;
     renderGoals(k);
@@ -51,24 +51,36 @@ async function loadKPIs() {
   }
 }
 
+// Q3 pacing: quarter runs 7/1 → 9/30 (92 days). Expected % = days elapsed / days in quarter.
+function q3PacePct() {
+  const now = new Date();
+  const start = new Date(now.getFullYear(), 6, 1); // July 1
+  const end = new Date(now.getFullYear(), 8, 30);  // Sep 30
+  const total = end - start;
+  const done = Math.max(0, Math.min(total, now - start));
+  return Math.round((done / total) * 100);
+}
+
 function renderGoals(k) {
+  const q = k.quarter || {};
+  const label = state.company === 'apex' ? 'Apex multifamily' : 'Fortress industrial';
   const targets = [
-    { name: 'Q3 2026 Opportunities', actual: k.opps_this_week * 12, target: 20 },
-    { name: 'Q3 2026 Signed PSAs', actual: k.psas_signed_this_week, target: 5 },
-    { name: 'Q3 2026 Closed Deals', actual: 0, target: 2 },
-    { name: 'Net new Fortress leads', actual: 0, target: 200 },
+    { name: 'Q3 2026 New Opportunities', actual: q.opps || 0, target: 20 },
+    { name: 'Q3 2026 PSAs Sent', actual: q.psas_sent || 0, target: 5 },
+    { name: 'Q3 2026 Closed Won', actual: q.closed_won || 0, target: 2 },
+    { name: `Net new ${label} leads`, actual: q.new_leads || 0, target: 200 },
   ];
+  const paceExpected = q3PacePct();
   const tbody = document.getElementById('goals-body');
   tbody.innerHTML = targets.map((t) => {
-    const pct = Math.min(100, Math.round((t.actual / t.target) * 100));
-    const paceExpected = new Date().getMonth() >= 6 ? 50 : 25;
+    const pct = t.target ? Math.min(100, Math.round((t.actual / t.target) * 100)) : 0;
     const paceDelta = pct - paceExpected;
     const paceClass = paceDelta >= 0 ? 'pace-ahead' : 'pace-behind';
-    const paceText = paceDelta >= 0 ? `Ahead · ${pct}%` : `Behind · ${pct}%`;
+    const paceText = paceDelta >= 0 ? `Ahead of pace (${pct}% vs ${paceExpected}%)` : `Behind pace (${pct}% vs ${paceExpected}%)`;
     return `<tr>
       <td>${t.name}</td>
-      <td>${t.actual}</td>
-      <td>${t.target}</td>
+      <td>${fmtInt(t.actual)}</td>
+      <td>${fmtInt(t.target)}</td>
       <td><div class="progress"><div class="progress-fill" style="width:${pct}%"></div></div></td>
       <td class="${paceClass}">${paceText}</td>
     </tr>`;
@@ -171,6 +183,76 @@ async function refresh() {
   await Promise.all([loadBridge(), loadKPIs(), loadOpportunities(), loadCalls(), loadLeads()]);
 }
 
+// ---- Capabilities catalog ----
+const CAPABILITIES = {
+  fortress: [
+    { title: 'Morning briefing', desc: 'Ranked top acquisition, disposition, operational actions across SF, Drive, Gmail, Call Tools.',
+      prompts: ['Give me today\'s morning briefing.', 'What\'s on my plate this morning?', 'Rank the top 10 acquisition actions I need to take today.'] },
+    { title: 'Buyer research (CoStar-first)', desc: 'Pulls active industrial buyers from CoStar, cross-references SF for NDA-on-file flags. Never leads with SF or web.',
+      prompts: ['Find 20 industrial buyers with 100K+ SF portfolios in the Southeast.', 'Who owns 1200 Antioch Pike?', 'Pull recent industrial buyers active in Middle TN — cross-ref against my SF Contacts.'] },
+    { title: 'Off-market property lists', desc: 'Reonomy saved-search lookups for industrial warehouses. Just pass the saved-search UUID.',
+      prompts: ['Pull the industrial saved search from Reonomy.', 'Give me 25 off-market warehouses in Nashville MSA from Reonomy.'] },
+    { title: 'Salesforce ops (safe writes)', desc: 'Read/write SF Leads, Opps, Tasks, Notes. Cross-references before insert — never duplicates a Contact.',
+      prompts: ['Show open industrial opps sorted by amount.', 'Create a follow-up Task on lead X for tomorrow.', 'Merge these two duplicate Contacts.'] },
+    { title: 'Lead enrichment', desc: 'Take a Lead or address, pull property record + owner + comps, score against Mason\'s qualification criteria.',
+      prompts: ['Enrich lead Bob Smith.', 'Tell me everything about the property at 2400 White Bridge Rd.'] },
+    { title: 'Call QA + coaching', desc: 'Score Call Tools recordings against the 10-item Fortress rubric. Per-agent coaching reports.',
+      prompts: ['Score the calls this week.', 'How is Hunter doing this week?', 'Give me a coaching report for Paul and Lewis.'] },
+    { title: 'Stale lead surfacing', desc: 'Industrial leads untouched 30+ days, sorted oldest-first.',
+      prompts: ['Show stale leads.', 'What haven\'t I touched in 45+ days?'] },
+    { title: 'PSA / Seller package (A5)', desc: 'Fills the PSA template (25 blanks), drafts the seller cover email at 1% earnest, auto-saves the PSA to Fortress Google Drive.',
+      prompts: ['Prep the PSA for the Dickson opp.', 'Draft the offer for 500 Industrial Blvd — 1% earnest, 60-day exam.'] },
+    { title: 'Deal package / Buyer OM (A6)', desc: 'Pre-NDA email + NDA (if buyer isn\'t on file) + full 15-section OM, auto-saved to Drive.',
+      prompts: ['Get the Dickson opp ready to shop.', 'Draft the OM + pre-NDA email for opp X — target these 5 buyers from CoStar.'] },
+    { title: 'Gmail / Drive / Calendar / Docusign', desc: 'Draft emails from Mason\'s account, upload docs to Drive, create calendar events, send Docusign envelopes.',
+      prompts: ['Draft a follow-up email to seller X.', 'Upload the OM I just generated to Drive.', 'Send the PSA to seller for signature via Docusign.'] },
+  ],
+  apex: [
+    { title: 'Daily stale-leads batch (5 AM CT)', desc: 'Fires stale-leads pass for each broker: Andrew (5-30 unit), Jarrett (31-100), Brent (101+). Only auto-send Apex has.',
+      prompts: ['Send today\'s stale leads.', 'Preview the stale-leads batch before it goes.'] },
+    { title: 'Buyer research (CoStar-first)', desc: 'Multifamily buyer lookups via CoStar first, then Reonomy, then SF Contacts.',
+      prompts: ['Find active multifamily buyers with 500+ units in Middle TN.', 'Who owns the 200-unit deal on Nolensville Pike?'] },
+    { title: 'Off-market multifamily lists (Reonomy)', desc: 'Pass a Reonomy saved-search UUID; get back the property list.',
+      prompts: ['Pull the Reonomy multifamily saved search.', 'Give me 50 off-market properties matching the saved search UUID 99a5345f-….'] },
+    { title: 'Broker segmentation', desc: 'Every lead output includes unit-count band + responsible broker (Andrew / Jarrett / Brent).',
+      prompts: ['Stale leads for Andrew.', 'What\'s Brent\'s pipeline look like this week?', 'What did Jarrett touch this week?'] },
+    { title: 'Salesforce ops (multifamily-scoped)', desc: 'Same SF ops as Fortress, filtered to Property_Type__c = Multifamily. Never duplicates a Contact.',
+      prompts: ['Show all multifamily opps by unit count.', 'Create a Task on lead Y for tomorrow.'] },
+    { title: 'Call QA + coaching', desc: 'Score Apex call recordings when the Apex campaign ID is configured.',
+      prompts: ['Score the Apex callers this week.'] },
+    { title: 'Gmail / Drive / Calendar / Docusign', desc: 'Zapier bridge sends from info@theapexcap.com when that account is added to Zapier.',
+      prompts: ['Draft an email to seller X.', 'Send a calendar invite to Alex for tomorrow at 3pm.'] },
+  ],
+};
+
+function renderCapabilities() {
+  const targetKey = state.company === 'apex' ? 'apex' : 'fortress';
+  const containerId = targetKey === 'apex' ? 'cap-apex' : 'cap-fortress';
+  const otherId = targetKey === 'apex' ? 'cap-fortress' : 'cap-apex';
+  const el = document.getElementById(containerId);
+  const other = document.getElementById(otherId);
+  if (!el || !other) return;
+  const build = (list) => list.map((c) => `
+    <div class="cap-card">
+      <h3>${c.title}</h3>
+      <p>${c.desc}</p>
+      <div class="cap-prompts">
+        <div class="cap-prompts-label">Try:</div>
+        ${c.prompts.map((p) => `<button class="cap-prompt" data-prompt="${p.replace(/"/g,'&quot;')}">${p}</button>`).join('')}
+      </div>
+    </div>`).join('');
+  document.getElementById('cap-fortress').innerHTML = build(CAPABILITIES.fortress);
+  document.getElementById('cap-apex').innerHTML = build(CAPABILITIES.apex);
+  document.querySelectorAll('.cap-prompt').forEach((b) => {
+    b.addEventListener('click', () => {
+      navigator.clipboard.writeText(b.dataset.prompt);
+      const old = b.textContent;
+      b.textContent = '✓ Copied — paste into LibreChat';
+      setTimeout(() => (b.textContent = old), 1400);
+    });
+  });
+}
+
 // Wiring
 document.querySelectorAll('.tab').forEach((btn) => {
   btn.addEventListener('click', () => {
@@ -192,4 +274,5 @@ document.querySelectorAll('.company').forEach((btn) => {
 document.getElementById('refresh').addEventListener('click', refresh);
 
 refresh();
+renderCapabilities();
 setInterval(refresh, 60000); // auto-refresh every 60s
