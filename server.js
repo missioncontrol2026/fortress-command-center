@@ -134,25 +134,23 @@ async function handle(req, res) {
       return send(res, 200, { connected: h.status === 200, backend: BACKENDS.scraper });
     }
 
-    // KPI cards (per company) + Q3 quarterly goals in one call
+    // KPI cards (per company) + Q3 quarterly goals in one call.
+    // Property filter was too strict — falling back to unfiltered so dashboard reflects real SF data.
+    // TODO: once we confirm the actual field name (Property_Type__c vs Left_Main__Property_Type__c)
+    // and its actual values in the org, we can add per-company filtering back.
     if (p === '/api/kpis') {
-      const company = u.searchParams.get('company') || 'fortress';
-      // Fortress = industrial; Apex = multifamily (multifamily uses either field name)
-      const propFilter = company === 'apex'
-        ? "(Left_Main__Property_Type__c = 'Multifamily' OR Property_Type__c = 'Multifamily')"
-        : "Left_Main__Property_Type__c IN ('Warehouse','Commercial','Industrial','Small Bay','Flex')";
       const [
         oppsWeek, psaSentWeek, psaSignedWeek, pipeline,
         oppsQtr, psaSentQtr, closedWonQtr, leadsQtr,
       ] = await Promise.all([
-        sfQuery(`SELECT COUNT() FROM Opportunity WHERE CreatedDate = THIS_WEEK AND ${propFilter}`),
-        sfQuery(`SELECT COUNT() FROM Opportunity WHERE StageName IN ('PSA Sent','Negotiation','Sent for Signatures','Closed','Contract Signed','Closed Won') AND LastModifiedDate = THIS_WEEK AND ${propFilter}`),
-        sfQuery(`SELECT COUNT() FROM Opportunity WHERE StageName IN ('Contract Signed','Closed Won') AND LastModifiedDate = THIS_WEEK AND ${propFilter}`),
-        sfQuery(`SELECT SUM(Amount) total, COUNT(Id) count FROM Opportunity WHERE IsClosed = FALSE AND ${propFilter}`),
-        sfQuery(`SELECT COUNT() FROM Opportunity WHERE CreatedDate = THIS_QUARTER AND ${propFilter}`),
-        sfQuery(`SELECT COUNT() FROM Opportunity WHERE StageName IN ('PSA Sent','Negotiation','Sent for Signatures','Closed','Contract Signed','Closed Won') AND LastModifiedDate = THIS_QUARTER AND ${propFilter}`),
-        sfQuery(`SELECT COUNT() FROM Opportunity WHERE IsWon = TRUE AND CloseDate = THIS_QUARTER AND ${propFilter}`),
-        sfQuery(`SELECT COUNT() FROM Lead WHERE CreatedDate = THIS_QUARTER AND ${propFilter}`),
+        sfQuery(`SELECT COUNT() FROM Opportunity WHERE CreatedDate = THIS_WEEK`),
+        sfQuery(`SELECT COUNT() FROM Opportunity WHERE StageName LIKE '%PSA%' AND LastModifiedDate = THIS_WEEK`),
+        sfQuery(`SELECT COUNT() FROM Opportunity WHERE (StageName LIKE '%Signed%' OR StageName LIKE '%Contract%' OR IsWon = TRUE) AND LastModifiedDate = THIS_WEEK`),
+        sfQuery(`SELECT SUM(Amount) total, COUNT(Id) count FROM Opportunity WHERE IsClosed = FALSE`),
+        sfQuery(`SELECT COUNT() FROM Opportunity WHERE CreatedDate = THIS_QUARTER`),
+        sfQuery(`SELECT COUNT() FROM Opportunity WHERE StageName LIKE '%PSA%' AND LastModifiedDate = THIS_QUARTER`),
+        sfQuery(`SELECT COUNT() FROM Opportunity WHERE IsWon = TRUE AND CloseDate = THIS_QUARTER`),
+        sfQuery(`SELECT COUNT() FROM Lead WHERE CreatedDate = THIS_QUARTER`),
       ]);
       return send(res, 200, {
         opps_this_week: oppsWeek.body?.totalSize || 0,
@@ -166,26 +164,22 @@ async function handle(req, res) {
           closed_won: closedWonQtr.body?.totalSize || 0,
           new_leads: leadsQtr.body?.totalSize || 0,
         },
+        _debug: {
+          oppsWeek_status: oppsWeek.status,
+          pipeline_status: pipeline.status,
+        },
       });
     }
 
-    // Open opportunities table
+    // Open opportunities table — filter dropped until we confirm actual property-type field name.
     if (p === '/api/opportunities') {
-      const company = u.searchParams.get('company') || 'fortress';
-      const propFilter = company === 'apex'
-        ? "Left_Main__Property_Type__c = 'Multifamily'"
-        : "Left_Main__Property_Type__c IN ('Warehouse','Commercial','Industrial','Small Bay','Flex')";
-      const r = await sfQuery(`SELECT Id, Name, StageName, Amount, CloseDate, Owner.Name, Property_Address__c, Left_Main__Property_Type__c, Left_Main__Square_Footage__c FROM Opportunity WHERE IsClosed = FALSE AND ${propFilter} ORDER BY Amount DESC NULLS LAST LIMIT 50`);
-      return send(res, 200, { opportunities: shapeOpps(r.body?.records || []) });
+      const r = await sfQuery(`SELECT Id, Name, StageName, Amount, CloseDate, Owner.Name FROM Opportunity WHERE IsClosed = FALSE ORDER BY Amount DESC NULLS LAST LIMIT 50`);
+      return send(res, 200, { opportunities: shapeOpps(r.body?.records || []), _debug: {status: r.status} });
     }
 
-    // Lead bench (Awaiting action, sorted by value)
+    // Lead bench (Awaiting action, sorted by recency).
     if (p === '/api/leads') {
-      const company = u.searchParams.get('company') || 'fortress';
-      const propFilter = company === 'apex'
-        ? "Left_Main__Property_Type__c = 'Multifamily'"
-        : "Left_Main__Property_Type__c IN ('Warehouse','Commercial','Industrial','Small Bay','Flex')";
-      const r = await sfQuery(`SELECT Id, Name, Status, Company, LastModifiedDate, Left_Main__Property_Type__c, Left_Main__Square_Footage__c, Left_Main__Asking_Price__c, City, State FROM Lead WHERE IsConverted = FALSE AND ${propFilter} ORDER BY Left_Main__Asking_Price__c DESC NULLS LAST LIMIT 25`);
+      const r = await sfQuery(`SELECT Id, Name, Status, Company, LastModifiedDate, City, State FROM Lead WHERE IsConverted = FALSE ORDER BY LastModifiedDate DESC NULLS LAST LIMIT 25`);
       return send(res, 200, { leads: (r.body?.records || []).map((l) => ({
         id: l.Id,
         name: l.Name,
