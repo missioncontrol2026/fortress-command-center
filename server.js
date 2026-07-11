@@ -22,6 +22,23 @@ const KEYS = {
   scraper: process.env.SCRAPER_API_KEY || '',
 };
 
+// ----- Company → Property Type mapping -----
+// Fortress Holdings = industrial CRE
+// Apex Capital = multifamily CRE
+const COMPANY_TYPES = {
+  fortress: ['Industrial', 'Warehouse', 'Small Bay', 'Flex'],
+  apex: ['Multi-Family', 'Condo/Townhouse', 'Duplex', 'Triplex', 'Quadplex'],
+};
+
+// Build a SOQL WHERE fragment: Left_Main__Property_Type__c IN ('A','B')
+function companyFilter(company, prefix) {
+  const types = COMPANY_TYPES[company];
+  if (!types) return ''; // no filter when company is unknown or 'all'
+  const quoted = types.map((t) => `'${t}'`).join(',');
+  const clause = `Left_Main__Property_Type__c IN (${quoted})`;
+  return prefix ? ` ${prefix} ${clause}` : clause;
+}
+
 function send(res, code, body, type = 'application/json') {
   res.writeHead(code, { 'content-type': type, 'access-control-allow-origin': '*' });
   if (typeof body === 'string' || Buffer.isBuffer(body)) return res.end(body);
@@ -69,7 +86,7 @@ function proxy(target, body, method = 'POST') {
   });
 }
 
-// SOQL query via SF proxy — returns Salesforce query result.
+// SOQL query via SF proxy.
 async function sfQuery(soql) {
   return proxy(
     { url: `${BACKENDS.sf}/services/data/v58.0/query/?q=${encodeURIComponent(soql)}`, key: KEYS.sf },
@@ -103,14 +120,6 @@ async function resolveAgentName(uuid) {
   } catch { return uuid.slice(0, 8); }
 }
 
-async function callToolsSummary() {
-  return proxy(
-    { url: `${BACKENDS.calltools}/api/calls/?page=1&page_size=1&ordering=-created`, key: KEYS.calltools },
-    null,
-    'GET'
-  );
-}
-
 async function scraperHealth() {
   return new Promise((resolve) => {
     const u = new URL(`${BACKENDS.scraper}/health`);
@@ -123,7 +132,11 @@ async function scraperHealth() {
   });
 }
 
-// Convert SF Opportunity records into a bench-friendly shape.
+// Convert SF Opportunity records into a dashboard-friendly shape.
+// Actual SF field names (verified against org):
+//   Left_Main__Property_Type__c, Left_Main__Square_footage__c,
+//   Left_Main__Address_1__c, Left_Main__City__c, Left_Main__State__c,
+//   Left_Main__Asking_Price__c
 function shapeOpps(records = []) {
   return records.map((r) => ({
     id: r.Id,
@@ -132,9 +145,12 @@ function shapeOpps(records = []) {
     amount: r.Amount,
     close: r.CloseDate,
     owner: r.Owner?.Name,
-    property: r.Property_Address__c || r.Name,
+    property: r.Left_Main__Address_1__c || r.Name,
+    city: r.Left_Main__City__c,
+    state: r.Left_Main__State__c,
     type: r.Left_Main__Property_Type__c,
-    size: r.Left_Main__Square_Footage__c,
+    size: r.Left_Main__Square_footage__c,
+    asking: r.Left_Main__Asking_Price__c,
   }));
 }
 
@@ -143,6 +159,7 @@ async function handle(req, res) {
   if (req.method === 'OPTIONS') return send(res, 204, '', 'text/plain');
   const u = new URL(req.url, `http://${req.headers.host}`);
   const p = u.pathname;
+  const company = u.searchParams.get('company') || '';
 
   try {
     // Bridge status
@@ -151,63 +168,84 @@ async function handle(req, res) {
       return send(res, 200, { connected: h.status === 200, backend: BACKENDS.scraper });
     }
 
-    // KPI cards (per company) + Q3 quarterly goals in one call.
-    // Property filter was too strict — falling back to unfiltered so dashboard reflects real SF data.
-    // TODO: once we confirm the actual field name (Property_Type__c vs Left_Main__Property_Type__c)
-    // and its actual values in the org, we can add per-company filtering back.
+    // KPI cards — filtered by company via Property Type.
+    // SF stages in this org:
+    //   Appointment Set, Follow-up, Long Term Followup, Negotiation,
+    //   Offer Sent, Contract Signed (closed-won), Closed Lost
     if (p === '/api/kpis') {
+      const cf = companyFilter(company, 'AND');
+
       const [
-        oppsWeek, psaSentWeek, psaSignedWeek, pipelineSum, pipelineCount,
-        oppsQtr, psaSentQtr, closedWonQtr, leadsQtr,
+        oppsWeek, offerSentWeek, closedWonWeek, pipelineSum, pipelineCount,
+        oppsQtr, offerSentQtr, closedWonQtr, leadsQtr,
       ] = await Promise.all([
-        sfQuery(`SELECT COUNT() FROM Opportunity WHERE CreatedDate = THIS_WEEK`),
-        sfQuery(`SELECT COUNT() FROM Opportunity WHERE StageName LIKE '%PSA%' AND LastModifiedDate = THIS_WEEK`),
-        sfQuery(`SELECT COUNT() FROM Opportunity WHERE (StageName LIKE '%Signed%' OR StageName LIKE '%Contract%' OR IsWon = TRUE) AND LastModifiedDate = THIS_WEEK`),
-        sfQuery(`SELECT SUM(Amount) FROM Opportunity WHERE IsClosed = FALSE`),
-        sfQuery(`SELECT COUNT() FROM Opportunity WHERE IsClosed = FALSE`),
-        sfQuery(`SELECT COUNT() FROM Opportunity WHERE CreatedDate = THIS_QUARTER`),
-        sfQuery(`SELECT COUNT() FROM Opportunity WHERE StageName LIKE '%PSA%' AND LastModifiedDate = THIS_QUARTER`),
-        sfQuery(`SELECT COUNT() FROM Opportunity WHERE IsWon = TRUE AND CloseDate = THIS_QUARTER`),
-        sfQuery(`SELECT COUNT() FROM Lead WHERE CreatedDate = THIS_QUARTER`),
+        sfQuery(`SELECT COUNT() FROM Opportunity WHERE CreatedDate = THIS_WEEK ${cf}`),
+        sfQuery(`SELECT COUNT() FROM Opportunity WHERE StageName = 'Offer Sent' AND LastModifiedDate = THIS_WEEK ${cf}`),
+        sfQuery(`SELECT COUNT() FROM Opportunity WHERE IsWon = TRUE AND LastModifiedDate = THIS_WEEK ${cf}`),
+        sfQuery(`SELECT SUM(Amount) total FROM Opportunity WHERE IsClosed = FALSE ${cf}`),
+        sfQuery(`SELECT COUNT() FROM Opportunity WHERE IsClosed = FALSE ${cf}`),
+        sfQuery(`SELECT COUNT() FROM Opportunity WHERE CreatedDate = THIS_QUARTER ${cf}`),
+        sfQuery(`SELECT COUNT() FROM Opportunity WHERE StageName = 'Offer Sent' AND LastModifiedDate = THIS_QUARTER ${cf}`),
+        sfQuery(`SELECT COUNT() FROM Opportunity WHERE IsWon = TRUE AND CloseDate = THIS_QUARTER ${cf}`),
+        sfQuery(`SELECT COUNT() FROM Lead WHERE CreatedDate = THIS_QUARTER ${cf}`),
       ]);
+
       return send(res, 200, {
+        company: company || 'all',
         opps_this_week: oppsWeek.body?.totalSize || 0,
-        psas_sent_this_week: psaSentWeek.body?.totalSize || 0,
-        psas_signed_this_week: psaSignedWeek.body?.totalSize || 0,
-        pipeline_value: pipelineSum.body?.records?.[0]?.expr0 || 0,
+        offers_sent_this_week: offerSentWeek.body?.totalSize || 0,
+        closed_won_this_week: closedWonWeek.body?.totalSize || 0,
+        pipeline_value: pipelineSum.body?.records?.[0]?.total || pipelineSum.body?.records?.[0]?.expr0 || 0,
         pipeline_count: pipelineCount.body?.totalSize || 0,
         quarter: {
           opps: oppsQtr.body?.totalSize || 0,
-          psas_sent: psaSentQtr.body?.totalSize || 0,
+          offers_sent: offerSentQtr.body?.totalSize || 0,
           closed_won: closedWonQtr.body?.totalSize || 0,
           new_leads: leadsQtr.body?.totalSize || 0,
-        },
-        _debug: {
-          oppsWeek_status: oppsWeek.status,
-          pipelineSum_status: pipelineSum.status, pipelineCount_status: pipelineCount.status,
         },
       });
     }
 
-    // Open opportunities table — filter dropped until we confirm actual property-type field name.
+    // Open opportunities table — with company filter + all needed fields.
     if (p === '/api/opportunities') {
-      const r = await sfQuery(`SELECT Id, Name, StageName, Amount, CloseDate, Owner.Name FROM Opportunity WHERE IsClosed = FALSE ORDER BY Amount DESC NULLS LAST LIMIT 50`);
-      return send(res, 200, { opportunities: shapeOpps(r.body?.records || []), _debug: {status: r.status} });
+      const cf = companyFilter(company, 'AND');
+      const r = await sfQuery(
+        `SELECT Id, Name, StageName, Amount, CloseDate, Owner.Name,
+                Left_Main__Property_Type__c, Left_Main__Square_footage__c,
+                Left_Main__Address_1__c, Left_Main__City__c, Left_Main__State__c,
+                Left_Main__Asking_Price__c
+         FROM Opportunity
+         WHERE IsClosed = FALSE ${cf}
+         ORDER BY Amount DESC NULLS LAST LIMIT 50`
+      );
+      return send(res, 200, { company: company || 'all', opportunities: shapeOpps(r.body?.records || []) });
     }
 
-    // Lead bench (Awaiting action, sorted by recency).
+    // Lead bench — with company filter + all needed fields.
     if (p === '/api/leads') {
-      const r = await sfQuery(`SELECT Id, Name, Status, Company, LastModifiedDate, City, State FROM Lead WHERE IsConverted = FALSE ORDER BY LastModifiedDate DESC NULLS LAST LIMIT 25`);
-      return send(res, 200, { leads: (r.body?.records || []).map((l) => ({
-        id: l.Id,
-        name: l.Name,
-        property_type: l.Left_Main__Property_Type__c,
-        size: l.Left_Main__Square_Footage__c,
-        city: l.City,
-        state: l.State,
-        stage: l.Status,
-        value: l.Left_Main__Asking_Price__c,
-      })) });
+      const cf = companyFilter(company, 'AND');
+      const r = await sfQuery(
+        `SELECT Id, Name, Status, Company, LastModifiedDate, City, State,
+                Left_Main__Property_Type__c, Left_Main__Square_footage__c,
+                Left_Main__Asking_Price__c
+         FROM Lead
+         WHERE IsConverted = FALSE ${cf}
+         ORDER BY LastModifiedDate DESC NULLS LAST LIMIT 25`
+      );
+      return send(res, 200, {
+        company: company || 'all',
+        leads: (r.body?.records || []).map((l) => ({
+          id: l.Id,
+          name: l.Name,
+          company: l.Company,
+          property_type: l.Left_Main__Property_Type__c,
+          size: l.Left_Main__Square_footage__c,
+          city: l.City,
+          state: l.State,
+          stage: l.Status,
+          value: l.Left_Main__Asking_Price__c,
+        })),
+      });
     }
 
     // Legacy raw calls passthrough
@@ -216,8 +254,7 @@ async function handle(req, res) {
       return send(res, 200, r.body);
     }
 
-    // Frontend uses this endpoint for the leaderboard (dashboard's Fortress Holdings section)
-    // Supports ?period=today|week|all (default: all/last 200)
+    // Leaderboard + call summary
     if (p === '/api/calls/summary') {
       const period = u.searchParams.get('period') || 'today';
       const pageSize = period === 'week' ? 500 : 200;
@@ -234,7 +271,6 @@ async function handle(req, res) {
       });
       const byAgent = {};
       for (const call of results) {
-        // Prefer clicker_agent_id (individual person) over app_user (seat)
         const key = call.clicker_agent_id || call.app_user || 'unknown';
         if (!byAgent[key]) byAgent[key] = { agent: key, calls: 0, inbound: 0, outbound: 0, over3min: 0, duration: 0 };
         const row = byAgent[key];
@@ -261,7 +297,7 @@ async function handle(req, res) {
       const avgDur = totalConnects ? Math.round(results.reduce((a, cc) => a + (Number(cc.duration) || 0), 0) / totalConnects) : 0;
       const today = { dials: totalDials, connects: totalConnects, avg_duration: avgDur };
       const dateLabel = todayStart.toISOString().slice(0, 10);
-      return send(res, 200, { leaderboard, today, agents: leaderboard, period, date: dateLabel, total_calls: results.length, _debug: { upstream: r.status, pageSize } });
+      return send(res, 200, { leaderboard, today, agents: leaderboard, period, date: dateLabel, total_calls: results.length });
     }
 
     // Fallback: static files
