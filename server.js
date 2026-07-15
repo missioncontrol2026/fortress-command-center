@@ -7,8 +7,32 @@ const https = require('https');
 const fs = require('fs');
 const path = require('path');
 const { URL } = require('url');
+const { MongoClient } = require('mongodb');
 
 const PORT = process.env.PORT || 10000;
+
+// ----- LibreChat MongoDB (for chat-usage endpoint) -----
+const MONGO_URI = process.env.MONGO_URI || '';
+const AGENT_IDS = {
+  fortress: process.env.FORTRESS_AGENT_ID || 'agent_vtcyFwjsIFG6UuQdD_Vv8',
+  apex: process.env.APEX_AGENT_ID || 'agent_R6if1iS8zKsnETs8C1zVn',
+};
+// Reverse lookup: agent_id → company name
+const AGENT_COMPANY = {};
+for (const [co, aid] of Object.entries(AGENT_IDS)) AGENT_COMPANY[aid] = co;
+
+let _mongoClient = null;
+async function getMongoDb() {
+  if (!MONGO_URI) throw new Error('MONGO_URI not configured');
+  if (!_mongoClient) {
+    _mongoClient = new MongoClient(MONGO_URI, {
+      connectTimeoutMS: 10000,
+      serverSelectionTimeoutMS: 10000,
+    });
+    await _mongoClient.connect();
+  }
+  return _mongoClient.db(); // uses DB name from URI (LibreChat)
+}
 
 const BACKENDS = {
   sf: process.env.SF_PROXY_URL || 'https://fortress-sf-proxy.onrender.com',
@@ -298,6 +322,156 @@ async function handle(req, res) {
       const today = { dials: totalDials, connects: totalConnects, avg_duration: avgDur };
       const dateLabel = todayStart.toISOString().slice(0, 10);
       return send(res, 200, { leaderboard, today, agents: leaderboard, period, date: dateLabel, total_calls: results.length });
+    }
+
+    // ----- LibreChat usage report -----
+    if (p === '/api/chat-usage') {
+      const db = await getMongoDb();
+      const days = Math.min(parseInt(u.searchParams.get('days') || '1', 10), 30);
+      const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+      const agentFilter = u.searchParams.get('agent'); // 'fortress', 'apex', or omit for both
+
+      // Determine which agent_ids to include
+      let agentIds;
+      if (agentFilter && AGENT_IDS[agentFilter]) {
+        agentIds = [AGENT_IDS[agentFilter]];
+      } else {
+        agentIds = Object.values(AGENT_IDS);
+      }
+
+      // 1. Find conversations with these agents updated since cutoff
+      const convos = await db.collection('conversations').find({
+        agent_id: { $in: agentIds },
+        updatedAt: { $gte: since },
+      }).project({
+        conversationId: 1, title: 1, user: 1, agent_id: 1,
+        createdAt: 1, updatedAt: 1,
+      }).toArray();
+
+      if (!convos.length) {
+        return send(res, 200, {
+          period: { days, since: since.toISOString() },
+          summary: { total_conversations: 0, total_messages: 0 },
+          agents: {},
+          conversations: [],
+        });
+      }
+
+      const convoIds = convos.map(c => c.conversationId);
+      const convoMap = {};
+      for (const c of convos) convoMap[c.conversationId] = c;
+
+      // 2. Get all messages in those conversations from the period
+      const messages = await db.collection('messages').find({
+        conversationId: { $in: convoIds },
+        createdAt: { $gte: since },
+      }).project({
+        messageId: 1, conversationId: 1, user: 1, sender: 1,
+        text: 1, isCreatedByUser: 1, error: 1, unfinished: 1,
+        finish_reason: 1, model: 1, createdAt: 1,
+      }).sort({ createdAt: 1 }).toArray();
+
+      // 3. Resolve user IDs → names from users collection
+      const userIds = [...new Set(convos.map(c => c.user).filter(Boolean))];
+      const users = userIds.length
+        ? await db.collection('users').find(
+            { _id: { $in: userIds.map(id => {
+              try { return new (require('mongodb').ObjectId)(id); } catch { return id; }
+            }) } },
+            { projection: { name: 1, username: 1, email: 1 } }
+          ).toArray()
+        : [];
+      const userMap = {};
+      for (const u2 of users) userMap[u2._id.toString()] = u2.name || u2.username || u2.email || 'Unknown';
+
+      // 4. Build per-conversation summaries
+      const convoSummaries = [];
+      const agentStats = {};
+
+      for (const convo of convos) {
+        const agentName = AGENT_COMPANY[convo.agent_id] || convo.agent_id;
+        if (!agentStats[agentName]) {
+          agentStats[agentName] = {
+            conversations: 0, user_messages: 0, agent_messages: 0,
+            errors: 0, unfinished: 0, unique_users: new Set(),
+          };
+        }
+        const stats = agentStats[agentName];
+        stats.conversations += 1;
+
+        const convoMsgs = messages.filter(m => m.conversationId === convo.conversationId);
+        const userMsgs = convoMsgs.filter(m => m.isCreatedByUser);
+        const agentMsgs = convoMsgs.filter(m => !m.isCreatedByUser);
+        const errors = agentMsgs.filter(m => m.error);
+        const incomplete = agentMsgs.filter(m => m.unfinished);
+
+        stats.user_messages += userMsgs.length;
+        stats.agent_messages += agentMsgs.length;
+        stats.errors += errors.length;
+        stats.unfinished += incomplete.length;
+        if (convo.user) stats.unique_users.add(convo.user);
+
+        const userName = userMap[convo.user] || convo.user || 'Unknown';
+
+        // Build Q&A pairs
+        const qaPairs = [];
+        for (let i = 0; i < convoMsgs.length; i++) {
+          const msg = convoMsgs[i];
+          if (msg.isCreatedByUser) {
+            const answer = convoMsgs[i + 1] && !convoMsgs[i + 1].isCreatedByUser
+              ? convoMsgs[i + 1] : null;
+            qaPairs.push({
+              question: (msg.text || '').slice(0, 500),
+              answer_preview: answer ? (answer.text || '').slice(0, 300) : null,
+              had_error: answer ? !!answer.error : false,
+              was_unfinished: answer ? !!answer.unfinished : false,
+              timestamp: msg.createdAt,
+            });
+          }
+        }
+
+        convoSummaries.push({
+          conversation_id: convo.conversationId,
+          title: convo.title || 'Untitled',
+          agent: agentName,
+          user: userName,
+          started: convo.createdAt,
+          last_activity: convo.updatedAt,
+          total_messages: convoMsgs.length,
+          user_messages: userMsgs.length,
+          agent_messages: agentMsgs.length,
+          errors: errors.length,
+          unfinished: incomplete.length,
+          qa_pairs: qaPairs,
+        });
+      }
+
+      // Convert Sets to counts for JSON
+      const agentSummary = {};
+      for (const [name, stats] of Object.entries(agentStats)) {
+        agentSummary[name] = {
+          conversations: stats.conversations,
+          user_messages: stats.user_messages,
+          agent_messages: stats.agent_messages,
+          errors: stats.errors,
+          unfinished: stats.unfinished,
+          unique_users: stats.unique_users.size,
+        };
+      }
+
+      return send(res, 200, {
+        period: { days, since: since.toISOString(), generated: new Date().toISOString() },
+        summary: {
+          total_conversations: convos.length,
+          total_user_messages: messages.filter(m => m.isCreatedByUser).length,
+          total_agent_messages: messages.filter(m => !m.isCreatedByUser).length,
+          total_errors: messages.filter(m => m.error).length,
+        },
+        agents: agentSummary,
+        conversations: convoSummaries.sort((a, b) =>
+          new Date(b.last_activity) - new Date(a.last_activity)
+        ),
+      });
     }
 
     // Fallback: static files
